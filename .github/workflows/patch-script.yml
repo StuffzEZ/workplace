@@ -1,118 +1,123 @@
-name: Patch Raspberry Pi 5 USB Support
+name: Patch script.sh for Raspberry Pi 5 USB
 
 on:
-push:
-paths:
-- script.sh
-workflow_dispatch:
+  push:
+    paths:
+    - script.sh
+  workflow_dispatch:
 
-jobs:
-patch:
-runs-on: ubuntu-latest
-
-```
 permissions:
   contents: write
 
-steps:
-  - name: Checkout repo
-    uses: actions/checkout@v4
-
-  - name: Apply Pi 5 USB patch
-    run: |
-      echo "Patching script.sh..."
-
-      TMP_FILE=$(mktemp)
-
-      # Remove old STEP 1
-      awk '
-      /^# ─── STEP 1:/ {skip=1; next}
-      /^# ─── STEP 2:/ {skip=0}
-      !skip {print}
-      ' script.sh > "$TMP_FILE"
-
-      # Insert new STEP 1
-      awk '
-      /^# ─── STEP 2:/ && !done {
-          print "# ─── STEP 1: USB0 Ethernet (Pi 5 FIXED) ───"
-          print "section \"1\" \"USB0 Ethernet Connection to iPad (Pi 5 Method)\""
-          print ""
-          print "if ask \"Configure USB0 Ethernet (Pi 5 method)?\" \"y\"; then"
-          print "    CONFIG_TXT=\"/boot/firmware/config.txt\""
-          print "    if ! grep -q \"dtoverlay=dwc2\" \"$CONFIG_TXT\"; then"
-          print "        sudo sed -i \"/^\\\\[all\\\\]/a dtoverlay=dwc2\" \"$CONFIG_TXT\""
-          print "    fi"
-          print ""
-          print "    if ! grep -q \"otg_mode=1\" \"$CONFIG_TXT\"; then"
-          print "        echo \"otg_mode=1\" | sudo tee -a \"$CONFIG_TXT\" > /dev/null"
-          print "    fi"
-          print ""
-          print "    CMDLINE_TXT=\"/boot/firmware/cmdline.txt\""
-          print "    if ! grep -q \"modules-load=dwc2,g_ether\" \"$CMDLINE_TXT\"; then"
-          print "        sudo sed -i \"s/rootwait/rootwait modules-load=dwc2,g_ether/\" \"$CMDLINE_TXT\""
-          print "    fi"
-          print ""
-          print "    if ! nmcli con show ethernet-usb0 &>/dev/null; then"
-          print "        sudo nmcli con add type ethernet con-name ethernet-usb0 ifname usb0"
-          print "    fi"
-          print ""
-          print "    sudo tee /etc/NetworkManager/system-connections/ethernet-usb0.nmconnection > /dev/null <<'EOF'"
-          print "[connection]"
-          print "id=ethernet-usb0"
-          print "type=ethernet"
-          print "autoconnect=true"
-          print "interface-name=usb0"
-          print ""
-          print "[ipv4]"
-          print "method=shared"
-          print ""
-          print "[ipv6]"
-          print "method=auto"
-          print "EOF"
-          print ""
-          print "    sudo chmod 600 /etc/NetworkManager/system-connections/ethernet-usb0.nmconnection"
-          print ""
-          print "    sudo tee /usr/local/sbin/usb-gadget.sh > /dev/null <<'EOF'"
-          print "#!/bin/bash"
-          print "nmcli con up ethernet-usb0"
-          print "EOF"
-          print ""
-          print "    sudo chmod +x /usr/local/sbin/usb-gadget.sh"
-          print ""
-          print "    sudo tee /lib/systemd/system/usbgadget.service > /dev/null <<'EOF'"
-          print "[Unit]"
-          print "Description=USB Gadget Ethernet"
-          print "After=NetworkManager.service"
-          print ""
-          print "[Service]"
-          print "Type=oneshot"
-          print "ExecStart=/usr/local/sbin/usb-gadget.sh"
-          print "RemainAfterExit=yes"
-          print ""
-          print "[Install]"
-          print "WantedBy=sysinit.target"
-          print "EOF"
-          print ""
-          print "    sudo systemctl enable usbgadget.service"
-          print "    mark_done \"usb0\""
-          print "fi"
-          done=1
-      }
-      {print}
-      ' "$TMP_FILE" > script.sh
-
-      rm "$TMP_FILE"
-
-  - name: Commit changes
-    run: |
-      git config user.name "github-actions"
-      git config user.email "actions@github.com"
-
-      if git diff --quiet; then
-        echo "No changes to commit"
-      else
-        git add script.sh
-        git commit -m "Auto-patch USB0 for Raspberry Pi 5"
-        git push
-      fi
-```
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+    
+      - name: Patch STEP 1 (USB0 for Pi 5)
+        run: |
+          set -e
+    
+          # Skip if already patched
+          if grep -q "Pi 5 Method" script.sh; then
+            echo "Already patched — skipping."
+            exit 0
+          fi
+    
+          TMP=$(mktemp)
+    
+          # Remove old STEP 1 block
+          awk '
+          /^# ─── STEP 1:/ {skip=1; next}
+          /^# ─── STEP 2:/ {skip=0}
+          !skip {print}
+          ' script.sh > "$TMP"
+    
+          # Insert new STEP 1 before STEP 2
+          awk '
+          /^# ─── STEP 2:/ && !done {
+              print "# ─── STEP 1: USB0 Ethernet (Pi 5 Method) ───"
+              print "section \"1\" \"USB0 Ethernet Connection to iPad (Pi 5 Method)\""
+              print ""
+              print "if ask \"Configure USB0 Ethernet (Pi 5 method)?\" \"y\"; then"
+              print ""
+              print "    CONFIG_TXT=\"/boot/firmware/config.txt\""
+              print "    if ! grep -q \"dtoverlay=dwc2\" \"$CONFIG_TXT\"; then"
+              print "        sudo sed -i \"/^\\\\[all\\\\]/a dtoverlay=dwc2\" \"$CONFIG_TXT\""
+              print "    fi"
+              print ""
+              print "    if ! grep -q \"otg_mode=1\" \"$CONFIG_TXT\"; then"
+              print "        echo \"otg_mode=1\" | sudo tee -a \"$CONFIG_TXT\" > /dev/null"
+              print "    fi"
+              print ""
+              print "    CMDLINE_TXT=\"/boot/firmware/cmdline.txt\""
+              print "    if ! grep -q \"modules-load=dwc2,g_ether\" \"$CMDLINE_TXT\"; then"
+              print "        sudo sed -i \"s/rootwait/rootwait modules-load=dwc2,g_ether/\" \"$CMDLINE_TXT\""
+              print "    fi"
+              print ""
+              print "    if ! nmcli con show ethernet-usb0 &>/dev/null; then"
+              print "        sudo nmcli con add type ethernet con-name ethernet-usb0 ifname usb0"
+              print "    fi"
+              print ""
+              print "    sudo tee /etc/NetworkManager/system-connections/ethernet-usb0.nmconnection > /dev/null <<'EOF'"
+              print "[connection]"
+              print "id=ethernet-usb0"
+              print "type=ethernet"
+              print "autoconnect=true"
+              print "interface-name=usb0"
+              print ""
+              print "[ipv4]"
+              print "method=shared"
+              print ""
+              print "[ipv6]"
+              print "method=auto"
+              print "EOF"
+              print ""
+              print "    sudo chmod 600 /etc/NetworkManager/system-connections/ethernet-usb0.nmconnection"
+              print ""
+              print "    sudo tee /usr/local/sbin/usb-gadget.sh > /dev/null <<'EOF'"
+              print "#!/bin/bash"
+              print "nmcli con up ethernet-usb0"
+              print "EOF"
+              print ""
+              print "    sudo chmod +x /usr/local/sbin/usb-gadget.sh"
+              print ""
+              print "    sudo tee /lib/systemd/system/usbgadget.service > /dev/null <<'EOF'"
+              print "[Unit]"
+              print "Description=USB Gadget Ethernet"
+              print "After=NetworkManager.service"
+              print ""
+              print "[Service]"
+              print "Type=oneshot"
+              print "ExecStart=/usr/local/sbin/usb-gadget.sh"
+              print "RemainAfterExit=yes"
+              print ""
+              print "[Install]"
+              print "WantedBy=sysinit.target"
+              print "EOF"
+              print ""
+              print "    sudo systemctl enable usbgadget.service"
+              print "    mark_done \"usb0\""
+              print "fi"
+              print ""
+              done=1
+          }
+          {print}
+          ' "$TMP" > script.sh
+    
+          rm "$TMP"
+    
+      - name: Commit changes (if any)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+    
+          if git diff --quiet; then
+            echo "No changes to commit"
+          else
+            git add script.sh
+            git commit -m "Patch USB0 for Raspberry Pi 5 compatibility"
+            git push
+          fi
