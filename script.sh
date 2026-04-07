@@ -262,87 +262,68 @@ else
     skip "system update"
 fi
 
-# ─── STEP 1: USB0 Ethernet ────────────────────────────────────────────────────
-section "1" "USB0 Ethernet Connection to iPad"
+# ─── STEP 1: USB0 Ethernet (Pi 5 Method) ───
+section "1" "USB0 Ethernet Connection to iPad (Pi 5 Method)"
 
-echo ""
-echo -e "  ${BOLD}${YELLOW}This step requires manual file edits.${RESET}"
-echo -e "  ${DIM}The following files need to be configured:${RESET}"
-echo -e "  ${BRIGHT_CYAN}  /boot/firmware/config.txt${RESET}   ${DIM}→ add dtoverlay=dwc2,dr_mode=peripheral${RESET}"
-echo -e "  ${BRIGHT_CYAN}  /boot/firmware/cmdline.txt${RESET}  ${DIM}→ insert modules-load=dwc2,g_ether before rootwait${RESET}"
-echo -e "  ${BRIGHT_CYAN}  /etc/network/interfaces.d/usb0${RESET}"
-echo -e "  ${BRIGHT_CYAN}  /etc/dnsmasq.d/usb0${RESET}"
-echo -e "  ${BRIGHT_CYAN}  /etc/dhcpcd.conf${RESET}"
-echo ""
+if ask "Configure USB0 Ethernet (Pi 5 method)?" "y"; then
 
-if ask "Configure USB0 Ethernet files now?" "y"; then
-
-    # ── config.txt ──────────────────────────────────────────────────────────
-    step "Patching /boot/firmware/config.txt …"
     CONFIG_TXT="/boot/firmware/config.txt"
-    if ! grep -q "dtoverlay=dwc2,dr_mode=peripheral" "$CONFIG_TXT" 2>/dev/null; then
-        echo "" | sudo tee -a "$CONFIG_TXT" > /dev/null
-        echo "dtoverlay=dwc2,dr_mode=peripheral" | sudo tee -a "$CONFIG_TXT" > /dev/null
-        success "dtoverlay appended to config.txt"
-    else
-        info "config.txt already contains dtoverlay entry — skipping."
+    if ! grep -q "dtoverlay=dwc2" "$CONFIG_TXT"; then
+        sudo sed -i "/^\\[all\\]/a dtoverlay=dwc2" "$CONFIG_TXT"
     fi
 
-    # ── cmdline.txt ─────────────────────────────────────────────────────────
-    step "Patching /boot/firmware/cmdline.txt …"
+    if ! grep -q "otg_mode=1" "$CONFIG_TXT"; then
+        echo "otg_mode=1" | sudo tee -a "$CONFIG_TXT" > /dev/null
+    fi
+
     CMDLINE_TXT="/boot/firmware/cmdline.txt"
-    if ! grep -q "modules-load=dwc2,g_ether" "$CMDLINE_TXT" 2>/dev/null; then
-        sudo sed -i 's/rootwait/modules-load=dwc2,g_ether rootwait/' "$CMDLINE_TXT"
-        success "modules-load inserted into cmdline.txt"
-    else
-        info "cmdline.txt already contains modules-load entry — skipping."
+    if ! grep -q "modules-load=dwc2,g_ether" "$CMDLINE_TXT"; then
+        sudo sed -i "s/rootwait/rootwait modules-load=dwc2,g_ether/" "$CMDLINE_TXT"
     fi
 
-    # ── /etc/network/interfaces.d/usb0 ──────────────────────────────────────
-    step "Creating /etc/network/interfaces.d/usb0 …"
-    sudo tee /etc/network/interfaces.d/usb0 > /dev/null <<'EOF'
-auto usb0
-allow-hotplug usb0
-iface usb0 inet static
-    address 10.55.0.1
-    netmask 255.255.255.0
-EOF
-    success "Created /etc/network/interfaces.d/usb0"
-
-    # ── /etc/dnsmasq.d/usb0 ─────────────────────────────────────────────────
-    step "Installing dnsmasq …"
-    run_spin "apt install dnsmasq" sudo apt install -y dnsmasq
-
-    step "Creating /etc/dnsmasq.d/usb0 …"
-    sudo tee /etc/dnsmasq.d/usb0 > /dev/null <<'EOF'
-interface=usb0
-dhcp-range=10.55.0.2,10.55.0.6,255.255.255.0,1h
-dhcp-option=3
-leasefile-ro
-EOF
-    success "Created /etc/dnsmasq.d/usb0"
-
-    # ── /etc/dhcpcd.conf ────────────────────────────────────────────────────
-    step "Patching /etc/dhcpcd.conf …"
-    if ! grep -q "interface usb0" /etc/dhcpcd.conf 2>/dev/null; then
-        sudo tee -a /etc/dhcpcd.conf > /dev/null <<'EOF'
-
-interface usb0
-static ip_address=10.55.0.1/24
-static routers=
-static domain_name_servers=
-nohook wpa_supplicant
-EOF
-        success "usb0 static config appended to /etc/dhcpcd.conf"
-    else
-        info "dhcpcd.conf already has usb0 entry — skipping."
+    if ! nmcli con show ethernet-usb0 &>/dev/null; then
+        sudo nmcli con add type ethernet con-name ethernet-usb0 ifname usb0
     fi
 
+    sudo tee /etc/NetworkManager/system-connections/ethernet-usb0.nmconnection > /dev/null <<EOF
+[connection]
+id=ethernet-usb0
+type=ethernet
+autoconnect=true
+interface-name=usb0
+
+[ipv4]
+method=shared
+
+[ipv6]
+method=auto
+EOF
+
+    sudo chmod 600 /etc/NetworkManager/system-connections/ethernet-usb0.nmconnection
+
+    sudo tee /usr/local/sbin/usb-gadget.sh > /dev/null <<EOF
+#!/bin/bash
+nmcli con up ethernet-usb0
+EOF
+
+    sudo chmod +x /usr/local/sbin/usb-gadget.sh
+
+    sudo tee /lib/systemd/system/usbgadget.service > /dev/null <<EOF
+[Unit]
+Description=USB Gadget Ethernet
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/usb-gadget.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
+EOF
+
+    sudo systemctl enable usbgadget.service
     mark_done "usb0"
-    echo ""
-    warn "A reboot is required to activate USB0 Ethernet. You will be prompted at the end."
-else
-    skip "USB0 Ethernet configuration"
 fi
 
 # ─── STEP 2: Node.js LTS ──────────────────────────────────────────────────────
